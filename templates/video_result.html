@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Roboflow Video Results</title>
+</head>
+<body>
+    <h2>Processed Video</h2>
+    <video width="640" height="480" controls autoplay muted>
+        <source src="{{ url_for('static', filename=video_path) }}" type="video/mp4">
+        Your browser does not support the video tag.
+    </video>
+
+    <h3>Detections:</h3>
+    <ul>
+        {% for item in detections %}
+            <li>{{ item }}</li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
