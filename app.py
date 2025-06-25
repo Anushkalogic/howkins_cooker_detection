@@ -1,7 +1,7 @@
 from flask import Flask, render_template
-import cv2, os, threading, hashlib, subprocess
+import cv2, os, threading, subprocess
 from inference import InferencePipeline
-from database import init_db, insert_detection
+from database import init_db, insert_image_path
 
 app = Flask(__name__)
 
@@ -16,15 +16,10 @@ os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(OUTPUT_VIDEO), exist_ok=True)
 
 lock = threading.Lock()
-all_detections = []
 frame_count = 0
 
-def hash_frame(frame):
-    return hashlib.md5(cv2.imencode('.jpg', frame)[1]).hexdigest()
-
 def run_roboflow_pipeline():
-    global all_detections, frame_count
-    all_detections.clear()
+    global frame_count
     frame_count = 0
 
     # Clean previous frames
@@ -44,22 +39,21 @@ def run_roboflow_pipeline():
     def my_sink(result, video_frame):
         global frame_count
         output_image = result.get("output_image")
-        predictions = result.get("predictions", [])
 
-        if output_image and predictions:
+        if output_image:
             frame = output_image.numpy_image
+
             with lock:
+                frame_count += 1
+                image_path = os.path.join(IMAGE_SAVE_DIR, f"frame_{frame_count}.jpg")
+
+                # Save the frame and write to output video
+                cv2.imwrite(image_path, frame)
                 out.write(frame)
 
-            frame_count += 1
-            image_path = os.path.join(IMAGE_SAVE_DIR, f"frame_{frame_count}.jpg")
-            cv2.imwrite(image_path, frame)
-
-            for pred in predictions:
-                label = pred.get("class")
-                confidence = pred.get("confidence", 0)
-                insert_detection(label, confidence, image_path)
-                all_detections.append(f"{label} ({confidence:.0%})")
+                # ✅ Only store image path to DB
+                insert_image_path(image_path)
+                print(f"✅ Stored in DB: {image_path}")
 
     print("🚀 Starting Roboflow inference...")
     pipeline = InferencePipeline.init_with_workflow(
@@ -73,7 +67,6 @@ def run_roboflow_pipeline():
 
     pipeline.start()
     pipeline.join()
-
     out.release()
 
     print("♻️ Re-encoding video...")
@@ -84,12 +77,12 @@ def run_roboflow_pipeline():
     ])
     print("✅ Output video saved.")
 
-    return list(dict.fromkeys(all_detections))  # Remove duplicates
+    return []  # No label list needed
 
 @app.route('/')
 def index():
-    detections = run_roboflow_pipeline()
-    return render_template("video_result.html", video_path="output/output_video.mp4", detections=detections)
+    run_roboflow_pipeline()
+    return render_template("video_result.html", video_path="output/output_video.mp4", detections=[])
 
 if __name__ == '__main__':
     init_db()
