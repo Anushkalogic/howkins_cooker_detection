@@ -4,9 +4,9 @@
     <title>Roboflow Video Results</title>
 </head>
 <body>
-    <h2>Processed Video</h2>
+    <h2>Processed Output Video</h2>
     <video width="640" height="480" controls autoplay muted>
-        <source src="{{ url_for('static', filename=video_path) }}" type="video/mp4">
+        <source src="{{ url_for('static', filename=video_path) }}?t={{ config['SEND_FILE_MAX_AGE_DEFAULT'] }}" type="video/mp4">
         Your browser does not support the video tag.
     </video>
 
