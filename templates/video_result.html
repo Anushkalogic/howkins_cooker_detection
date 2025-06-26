@@ -2,19 +2,65 @@
 <html>
 <head>
     <title>Roboflow Video Results</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        table {
+            border-collapse: collapse;
+            margin-top: 20px;
+            width: 90%;
+        }
+        th, td {
+            text-align: center;
+            padding: 10px;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        video {
+            border: 1px solid #ccc;
+            margin-top: 10px;
+        }
+    </style>
 </head>
 <body>
+
     <h2>Processed Output Video</h2>
     <video width="640" height="480" controls autoplay muted>
-        <source src="{{ url_for('static', filename=video_path) }}?t={{ config['SEND_FILE_MAX_AGE_DEFAULT'] }}" type="video/mp4">
+        <source src="{{ url_for('static', filename=video_path) }}" type="video/mp4">
         Your browser does not support the video tag.
     </video>
 
-    <h3>Detections:</h3>
-    <ul>
-        {% for item in detections %}
-            <li>{{ item }}</li>
+    <h3>Detections with Volume and Defects:</h3>
+
+    {% if detections %}
+    <table border="1">
+        <tr>
+            <th>Image</th>
+            <th>Volume (L)</th>
+            <th>Defect/Dent</th>
+            <th>Download</th>
+        </tr>
+        {% for image, liters, label in detections %}
+        <tr>
+            <td>
+                <img src="{{ url_for('static', filename=image.split('static/')[-1]) }}" width="200">
+            </td>
+            <td>{{ "%.3f" | format(liters or 0.0) }} L</td>
+            <td>{{ label or 'None' }}</td>
+            <td>
+                <a href="{{ url_for('static', filename=image.split('static/')[-1]) }}" download>Download</a>
+            </td>
+        </tr>
         {% endfor %}
-    </ul>
+    </table>
+    {% else %}
+    <p>No detections available yet.</p>
+    {% endif %}
+
+    <br><br>
+    <a href="/download-csv">📄 Export as CSV</a>
+
 </body>
 </html>
