@@ -1,5 +1,5 @@
 from flask import Flask, render_template, send_file, request, jsonify
-import os, cv2, threading, subprocess, csv
+import os, cv2, threading, subprocess, csv, math
 from inference import InferencePipeline
 from database import init_db, insert_image_with_volume, fetch_all_images_with_volume_in_liters, query_images_by_param
 
@@ -9,7 +9,8 @@ INPUT_VIDEO = r"static/dataset/videoss.mp4"
 OUTPUT_VIDEO = r"static/output/output_video.mp4"
 TEMP_OUTPUT = r"static/output/temp_output.mp4"
 IMAGE_SAVE_DIR = r"static/detected_images"
-
+import cv2
+import math
 
 lock = threading.Lock()
 frame_count = 0
@@ -17,65 +18,44 @@ frame_count = 0
 os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(OUTPUT_VIDEO), exist_ok=True)
 
-import cv2
 
-PIXEL_TO_CM = 0.2  # Calibrate based on real measurements
 
-# Area thresholds mapped to liter values (in cm²)
-volume_thresholds = {
-    1: 1000,
-    2: 2000,
-    3: 3000,
-    4: 4000,
-    5: 5000,
-    6: 6000,
-    7: 7000,
-    8: 8000,
-    9: 9000,
-    10: 10000
-}
-
-def map_area_to_liters(area_cm2):
-    """Map the calculated area (in cm²) to a liter value from 1 to 10."""
-    for liter, threshold in volume_thresholds.items():
-        if area_cm2 <= threshold:
-            return liter
-    return 10  # Cap at 10L max
-
-PIXEL_TO_CM = 0.2  # Calibration factor: 1 pixel = 0.2 cm
-
-def estimate_volume_from_image(image_path):
+PIXEL_TO_CM = 0.05  
+def estimate_volume_cylinder(image_path):
     image = cv2.imread(image_path)
     if image is None:
+        print(f"⚠️ Failed to read image: {image_path}")
         return None, None
-
+    # Convert to grayscale and threshold
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Find external contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     if not contours:
+        print("⚠️ No contours found.")
         return None, None
-
+    # Pick the largest contour
     largest = max(contours, key=cv2.contourArea)
-    area = cv2.contourArea(largest)
-    area_cm2 = area * PIXEL_TO_CM * PIXEL_TO_CM
+    x, y, w, h = cv2.boundingRect(largest)
 
-    volume_l = area_cm2 / 1000  # 1000 cm³ = 1 L
-    volume_l_rounded = round(volume_l, 1)         # for saving or backend
-    volume_l_int = int(round(volume_l))           # for image display only
+    # Estimate real-world dimensions
+    height_cm = h * PIXEL_TO_CM
+    diameter_cm = w * PIXEL_TO_CM
+    radius_cm = diameter_cm / 2
 
-    # Draw integer label on image
+    # Volume of cylinder = π × r² × h (in cm³)
+    volume_cm3 = math.pi * (radius_cm ** 2) * height_cm
+    volume_l = volume_cm3 / 1000  # cm³ to liters
+    volume_l_rounded = round(volume_l, 1)
+    volume_l_int = int(round(volume_l))
+
+    # Draw label
     label = f"{volume_l_int} L"
-    cv2.putText(image, label, (10, 40),
-                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
-    # Optionally, show area as well
-    # area_label = f"{int(area_cm2)} cm²"
-    # cv2.putText(image, area_label, (10, 80),
-    #             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-
+    cv2.putText(image, label, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     cv2.imwrite(image_path, image)
 
+    print(f"📏 Estimated Volume: {volume_l_rounded} L from image: {image_path}")
     return volume_l_rounded, "object"
 
 def run_roboflow_pipeline():
@@ -112,44 +92,6 @@ def run_roboflow_pipeline():
         "-vcodec", "libx264", "-pix_fmt", "yuv420p",
         OUTPUT_VIDEO
     ])
-def calculate_accuracy(csv_file):
-    total = 0
-    exact_match = 0
-    tolerance_match = 0
-    total_error = 0
-
-    with open(csv_file, 'r') as file:
-        reader = csv.DictReader(file)
-        next(reader)  # skip header
-        for row in reader:
-            try:
-                actual = float(row["Actual Volume (L)"])
-                predicted = float(row["Volume (L)"].replace(" L", ""))
-                total += 1
-                error = abs(actual - predicted)
-                total_error += error
-
-                if actual == predicted:
-                    exact_match += 1
-
-                if error <= 1:
-                    tolerance_match += 1
-            except:
-                continue
-
-    if total == 0:
-        print("⚠️ No valid rows to evaluate.")
-        return
-
-    exact_accuracy = (exact_match / total) * 100
-    tolerance_accuracy = (tolerance_match / total) * 100
-    mae = total_error / total
-
-    print("📊 Accuracy Report")
-    print(f"Total Samples: {total}")
-    print(f"✅ Exact Match Accuracy: {exact_accuracy:.2f}%")
-    print(f"✅ ±1L Tolerance Accuracy: {tolerance_accuracy:.2f}%")
-    print(f"📉 Mean Absolute Error: {mae:.2f} L")
 
 def my_sink(result, video_frame):
     global frame_count
@@ -163,7 +105,7 @@ def my_sink(result, video_frame):
             cv2.imwrite(image_path, frame)
             out.write(frame)
 
-            volume_liters = estimate_volume_from_image(image_path)
+            volume_liters = estimate_volume_cylinder(image_path)
             insert_image_with_volume(image_path, volume_liters, "object")
             print(f"📸 {image_path} → Volume: {volume_liters} L")
 
@@ -174,38 +116,38 @@ def index():
     detections = fetch_all_images_with_volume_in_liters()
     return render_template("video_result.html", video_path="output/output_video.mp4", detections=detections)
 
-@app.route('/accuracy-report')
-def accuracy_report():
-    rows = fetch_all_images_with_volume_in_liters()
+# @app.route('/accuracy-report')
+# def accuracy_report():
+#     rows = fetch_all_images_with_volume_in_liters()
     
-    total = 0
-    correct = 0
-    for image_path, volume_liters, label in rows:
-        # Skip rows with missing or invalid volume
-        if volume_liters is None or not isinstance(volume_liters, (int, float)):
-            continue
+#     total = 0
+#     correct = 0
+#     for image_path, volume_liters, label in rows:
+#         # Skip rows with missing or invalid volume
+#         if volume_liters is None or not isinstance(volume_liters, (int, float)):
+#             continue
         
-        # 👇 ground truth based on filename (e.g., frame_70.jpg -> 7 L expected)
-        try:
-            frame_name = os.path.basename(image_path)
-            frame_number = int(frame_name.split("_")[1].split(".")[0])
-            expected_liter = frame_number // 10
-        except Exception as e:
-            print(f"❌ Failed to parse expected value from {image_path}: {e}")
-            continue
+#         # 👇 ground truth based on filename (e.g., frame_70.jpg -> 7 L expected)
+#         try:
+#             frame_name = os.path.basename(image_path)
+#             frame_number = int(frame_name.split("_")[1].split(".")[0])
+#             expected_liter = frame_number // 10
+#         except Exception as e:
+#             print(f"❌ Failed to parse expected value from {image_path}: {e}")
+#             continue
 
-        # ✅ Allow +/- 1L margin
-        if abs(volume_liters - expected_liter) <= 1:
-            correct += 1
-        total += 1
+#         # ✅ Allow +/- 1L margin
+#         if abs(volume_liters - expected_liter) <= 1:
+#             correct += 1
+#         total += 1
 
-    if total == 0:
-        print("⚠️ No valid rows to evaluate.")
-        return "⚠️ No valid rows to evaluate."
+#     if total == 0:
+#         print("⚠️ No valid rows to evaluate.")
+#         return "⚠️ No valid rows to evaluate."
 
-    accuracy = (correct / total) * 100
-    print(f"✅ Accuracy: {accuracy:.2f}% ({correct}/{total} correct)")
-    return f"✅ Accuracy: {accuracy:.2f}% ({correct}/{total} correct)"
+#     accuracy = (correct / total) * 100
+#     print(f"✅ Accuracy: {accuracy:.2f}% ({correct}/{total} correct)")
+#     return f"✅ Accuracy: {accuracy:.2f}% ({correct}/{total} correct)"
 
 
 @app.route('/download-csv')
@@ -219,18 +161,10 @@ def download_csv():
 
         for row in rows:
             image_path, volume_liters, label = row
-
-            if volume_liters is not None:
-                # 🔧 Fix volume formatting — force integer only (1-10)
-                volume_liters = min(max(int(volume_liters), 1), 10)
-                volume_value = f"{volume_liters} L"
-            else:
-                volume_value = "N/A"
-
+            volume_value = f"{int(volume_liters)} L" if volume_liters is not None else "N/A"
             writer.writerow([image_path, volume_value, label])
 
     return send_file(csv_path, as_attachment=True)
-
 
 @app.route('/query')
 def query():
@@ -239,7 +173,6 @@ def query():
         return jsonify({"error": "Missing ?q=..."}), 400
     results = query_images_by_param(q)
     return jsonify({"results": results})
-
 
 if __name__ == '__main__':
     init_db()
