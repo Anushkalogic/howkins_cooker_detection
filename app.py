@@ -1,9 +1,15 @@
 from flask import Flask, render_template, send_file, request, jsonify
 import os, cv2, threading, subprocess, csv, math
 from inference import InferencePipeline
+from routes.api_routes import api_bp  # 👈 import blueprint
+from routes.api_routes import update_latest_detection  # 👈 import
+import numpy as np
 from database import init_db, insert_image_with_volume, fetch_all_images_with_volume_in_liters, query_images_by_param
 
 app = Flask(__name__)
+
+app.register_blueprint(api_bp)
+
 
 INPUT_VIDEO = r"static/dataset/videoss.mp4"
 OUTPUT_VIDEO = r"static/output/output_video.mp4"
@@ -92,10 +98,10 @@ def run_roboflow_pipeline():
         "-vcodec", "libx264", "-pix_fmt", "yuv420p",
         OUTPUT_VIDEO
     ])
-
 def my_sink(result, video_frame):
     global frame_count
     output_image = result.get("output_image")
+    predictions = result.get("predictions", [])
 
     if output_image:
         frame = output_image.numpy_image
@@ -105,49 +111,77 @@ def my_sink(result, video_frame):
             cv2.imwrite(image_path, frame)
             out.write(frame)
 
-            volume_liters = estimate_volume_cylinder(image_path)
-            insert_image_with_volume(image_path, volume_liters, "object")
-            print(f"📸 {image_path} → Volume: {volume_liters} L")
+            volume_liters, _ = estimate_volume_cylinder(image_path)
+            volume_liters = int(round(volume_liters))  # round and convert to int
+
+            # ✅ Get label from predictions.data
+            label = "none"
+            if hasattr(predictions, "data") and "class_name" in predictions.data:
+                class_names = predictions.data["class_name"]
+                if isinstance(class_names, np.ndarray) and len(class_names) > 0:
+                    label = ", ".join(class_names.tolist())
+
+
+            insert_image_with_volume(image_path.replace("\\", "/"), volume_liters, label)
+            print(f"📸 {image_path} → Volume: {volume_liters} L | Label: {label}")
+            update_latest_detection(image_path.replace("\\", "/"), volume_liters, label)
+
+
+
+# @app.route('/')
+# def index():
+#     run_roboflow_pipeline()
+#     detections = fetch_all_images_with_volume_in_liters()
+#     return render_template("video_result.html", video_path="output/output_video.mp4", detections=detections)
+
 
 
 @app.route('/')
 def index():
     run_roboflow_pipeline()
     detections = fetch_all_images_with_volume_in_liters()
-    return render_template("video_result.html", video_path="output/output_video.mp4", detections=detections)
 
-# @app.route('/accuracy-report')
-# def accuracy_report():
-#     rows = fetch_all_images_with_volume_in_liters()
-    
-#     total = 0
-#     correct = 0
-#     for image_path, volume_liters, label in rows:
-#         # Skip rows with missing or invalid volume
-#         if volume_liters is None or not isinstance(volume_liters, (int, float)):
-#             continue
-        
-#         # 👇 ground truth based on filename (e.g., frame_70.jpg -> 7 L expected)
-#         try:
-#             frame_name = os.path.basename(image_path)
-#             frame_number = int(frame_name.split("_")[1].split(".")[0])
-#             expected_liter = frame_number // 10
-#         except Exception as e:
-#             print(f"❌ Failed to parse expected value from {image_path}: {e}")
-#             continue
+    # Count labels
+    total_frames = len(detections)
+    dented = sum(1 for _, _, label in detections if 'dent' in str(label).lower())
+    scratched = sum(1 for _, _, label in detections if 'scratch' in str(label).lower())
 
-#         # ✅ Allow +/- 1L margin
-#         if abs(volume_liters - expected_liter) <= 1:
-#             correct += 1
-#         total += 1
+    return render_template(
+        "video_result.html",
+        video_path="output/output_video.mp4",
+        detections=detections,
+        total_frames=total_frames,
+        dented=dented,
+        scratched=scratched
+    )
 
-#     if total == 0:
-#         print("⚠️ No valid rows to evaluate.")
-#         return "⚠️ No valid rows to evaluate."
 
-#     accuracy = (correct / total) * 100
-#     print(f"✅ Accuracy: {accuracy:.2f}% ({correct}/{total} correct)")
-#     return f"✅ Accuracy: {accuracy:.2f}% ({correct}/{total} correct)"
+@app.route('/get-live-count')
+def get_live_count():
+    return jsonify({"count": frame_count})
+
+
+@app.route('/show-db')
+def show_db():
+    from database import fetch_all_images_with_volume_in_liters
+    data = fetch_all_images_with_volume_in_liters()
+    return jsonify(data)
+
+
+@app.route('/get-detection-data')
+def get_detection_data():
+    detections = fetch_all_images_with_volume_in_liters()
+    total = len(detections)
+    dented = sum(1 for _, _, label in detections if 'dent' in str(label).lower())
+    scratched = sum(1 for _, _, label in detections if 'scratch' in str(label).lower())
+
+    return jsonify({
+        "total": total,
+        "dented": dented,
+        "scratched": scratched,
+        "detections": detections
+    })
+
 
 
 @app.route('/download-csv')
@@ -165,6 +199,8 @@ def download_csv():
             writer.writerow([image_path, volume_value, label])
 
     return send_file(csv_path, as_attachment=True)
+
+
 
 @app.route('/query')
 def query():

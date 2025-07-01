@@ -2,29 +2,91 @@
 <html>
 <head>
     <title>Roboflow Video Results</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f9f9f9;
         }
+
+        .summary-box {
+            float: right;
+            text-align: right;
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #e8f4ff;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+        }
+
+        .chart-container {
+            width: 60%;
+            margin: auto;
+            margin-bottom: 40px;
+        }
+
         table {
             border-collapse: collapse;
+            width: 100%;
+            background-color: #fff;
             margin-top: 20px;
-            width: 90%;
+            box-shadow: 0 0 10px rgba(0,0,0,0.05);
         }
+
         th, td {
             text-align: center;
-            padding: 10px;
+            padding: 12px;
+            border-bottom: 1px solid #ddd;
         }
+
         th {
-            background-color: #f2f2f2;
+            background-color: #007BFF;
+            color: white;
         }
+
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+
         video {
-            border: 1px solid #ccc;
-            margin-top: 10px;
+            border: 2px solid #007BFF;
+            margin-bottom: 30px;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        a.button {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+
+        h2, h3 {
+            color: #333;
         }
     </style>
 </head>
 <body>
+
+    <div class="summary-box">
+        {% set total = detections|length %}
+        {% set dents = detections | selectattr("2", "equalto", "dent") | list | length %}
+        {% set scratches = detections | selectattr("2", "equalto", "scratch") | list | length %}
+        <strong>📊 Detection Summary</strong><br>
+        Total Cookers: {{ total }}<br>
+        Dented: {{ dents }}<br>
+        Scratched: {{ scratches }}<br>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="detectionChart"></canvas>
+    </div>
 
     <h2>Processed Output Video</h2>
     <video width="640" height="480" controls autoplay muted>
@@ -35,7 +97,7 @@
     <h3>Detections with Volume and Defects:</h3>
 
     {% if detections %}
-    <table border="1">
+    <table>
         <tr>
             <th>Image</th>
             <th>Volume (L)</th>
@@ -47,7 +109,7 @@
             <td>
                 <img src="{{ url_for('static', filename=image.split('static/')[-1]) }}" width="200">
             </td>
-            <td>{{ "%.3f" | format(liters or 0.0) }} L</td>
+            <td>{{ "%.1f" | format(liters or 0.0) }} L</td>
             <td>{{ label or 'None' }}</td>
             <td>
                 <a href="{{ url_for('static', filename=image.split('static/')[-1]) }}" download>Download</a>
@@ -59,8 +121,52 @@
     <p>No detections available yet.</p>
     {% endif %}
 
-    <br><br>
-    <a href="/download-csv">📄 Export as CSV</a>
+    <a href="/download-csv" class="button">📄 Export as CSV</a>
+    <script>
+    fetch("/get-detection-data")
+        .then(res => res.json())
+        .then(data => {
+            console.log("📦 API Data:", data);
+            // You can now use data.total, data.dented, etc. to update chart or dashboard dynamically
+        });
+</script>
+
+  <script>
+    fetch("/get-detection-data")
+        .then(res => res.json())
+        .then(data => {
+            const ctx = document.getElementById('detectionChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Total', 'Dented', 'Scratched'],
+                    datasets: [{
+                        label: 'Counts',
+                        data: [data.total, data.dented, data.scratched],
+                        backgroundColor: ['#007BFF', '#FF5733', '#FFC107']
+                    }]
+                },
+                options: {
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Cooker Detection Summary'
+                        },
+                        legend: {
+                            display: false
+                        }
+                    },
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        });
+</script>
+
 
 </body>
 </html>

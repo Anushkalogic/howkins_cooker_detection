@@ -33,7 +33,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 def insert_image_with_volume(image_path, volume_liters, label):
     image_path = image_path.replace("\\", "/")
     conn = sqlite3.connect(DB_PATH)
@@ -43,18 +42,30 @@ def insert_image_with_volume(image_path, volume_liters, label):
         VALUES (?, ?, ?)
     """, (image_path, volume_liters, label))
     conn.commit()
-    conn.close()
-    print(f"[LOG] Saved to DB -> Image: {image_path}, Volume: {volume_liters} L, Label: {label}")
 
+    # ✅ Logging
+    print("📥 INSERTED TO DB:")
+    print(f"    📷 Image Path : {image_path}")
+    print(f"    📦 Volume (L) : {volume_liters}")
+    print(f"    🏷️ Label      : {label}")
+
+    # ✅ Show latest rows
+    cursor.execute("SELECT * FROM images ORDER BY id DESC LIMIT 5")
+    rows = cursor.fetchall()
+    print("📊 Latest DB Entries (last 5):")
+    for row in rows:
+        print(f"    {row}")
+
+    conn.close()
 
 def fetch_all_images_with_volume_in_liters():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT image_path, volume_liters, label FROM images")
     rows = cursor.fetchall()
+    print(f"📦 FETCHED {len(rows)} rows from DB.")
     conn.close()
     return [(img.replace("\\", "/"), vol, lbl) for img, vol, lbl in rows]
-
 
 def query_images_by_param(param):
     conn = sqlite3.connect(DB_PATH)
