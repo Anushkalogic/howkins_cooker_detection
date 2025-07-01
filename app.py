@@ -5,6 +5,7 @@ from routes.api_routes import api_bp  # 👈 import blueprint
 from routes.api_routes import update_latest_detection  # 👈 import
 import numpy as np
 from database import init_db, insert_image_with_volume, fetch_all_images_with_volume_in_liters, query_images_by_param
+from database import cleanup_null_entries
 
 app = Flask(__name__)
 
@@ -27,42 +28,6 @@ os.makedirs(os.path.dirname(OUTPUT_VIDEO), exist_ok=True)
 
 
 PIXEL_TO_CM = 0.05  
-def estimate_volume_cylinder(image_path):
-    image = cv2.imread(image_path)
-    if image is None:
-        print(f"⚠️ Failed to read image: {image_path}")
-        return None, None
-    # Convert to grayscale and threshold
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    # Find external contours
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        print("⚠️ No contours found.")
-        return None, None
-    # Pick the largest contour
-    largest = max(contours, key=cv2.contourArea)
-    x, y, w, h = cv2.boundingRect(largest)
-
-    # Estimate real-world dimensions
-    height_cm = h * PIXEL_TO_CM
-    diameter_cm = w * PIXEL_TO_CM
-    radius_cm = diameter_cm / 2
-
-    # Volume of cylinder = π × r² × h (in cm³)
-    volume_cm3 = math.pi * (radius_cm ** 2) * height_cm
-    volume_l = volume_cm3 / 1000  # cm³ to liters
-    volume_l_rounded = round(volume_l, 1)
-    volume_l_int = int(round(volume_l))
-
-    # Draw label
-    label = f"{volume_l_int} L"
-    cv2.putText(image, label, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.imwrite(image_path, image)
-
-    print(f"📏 Estimated Volume: {volume_l_rounded} L from image: {image_path}")
-    return volume_l_rounded, "object"
 
 def run_roboflow_pipeline():
     global frame_count, out
@@ -98,6 +63,9 @@ def run_roboflow_pipeline():
         "-vcodec", "libx264", "-pix_fmt", "yuv420p",
         OUTPUT_VIDEO
     ])
+
+    cleanup_null_entries()
+
 def my_sink(result, video_frame):
     global frame_count
     output_image = result.get("output_image")
@@ -112,21 +80,54 @@ def my_sink(result, video_frame):
             out.write(frame)
 
             volume_liters, _ = estimate_volume_cylinder(image_path)
-            volume_liters = int(round(volume_liters))  # round and convert to int
+            volume_liters = int(round(volume_liters)) if volume_liters is not None else 0
 
-            # ✅ Get label from predictions.data
             label = "none"
             if hasattr(predictions, "data") and "class_name" in predictions.data:
                 class_names = predictions.data["class_name"]
                 if isinstance(class_names, np.ndarray) and len(class_names) > 0:
                     label = ", ".join(class_names.tolist())
 
+            # Fallback to ensure non-null
+            label = label or "none"
 
             insert_image_with_volume(image_path.replace("\\", "/"), volume_liters, label)
-            print(f"📸 {image_path} → Volume: {volume_liters} L | Label: {label}")
             update_latest_detection(image_path.replace("\\", "/"), volume_liters, label)
+            print(f"📸 {image_path} → Volume: {volume_liters} L | Label: {label}")
 
 
+def estimate_volume_cylinder(image_path):
+    image = cv2.imread(image_path)
+    if image is None:
+        print(f"⚠️ Failed to read image: {image_path}")
+        return 0, "object"
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        print("⚠️ No contours found.")
+        return 0, "object"  # Return default 0 instead of None
+
+    largest = max(contours, key=cv2.contourArea)
+    x, y, w, h = cv2.boundingRect(largest)
+
+    height_cm = h * PIXEL_TO_CM
+    diameter_cm = w * PIXEL_TO_CM
+    radius_cm = diameter_cm / 2
+
+    volume_cm3 = math.pi * (radius_cm ** 2) * height_cm
+    volume_l = volume_cm3 / 1000
+    volume_l_rounded = round(volume_l, 1)
+    volume_l_int = int(round(volume_l))
+
+    label = f"{volume_l_int} L"
+    cv2.putText(image, label, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    cv2.imwrite(image_path, image)
+
+    print(f"📏 Estimated Volume: {volume_l_rounded} L from image: {image_path}")
+    return volume_l_rounded, "object"
 
 # @app.route('/')
 # def index():

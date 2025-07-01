@@ -77,3 +77,10 @@ def query_images_by_param(param):
     results = cursor.fetchall()
     conn.close()
     return results
+def cleanup_null_entries():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM images WHERE volume_liters IS NULL OR label IS NULL")
+    conn.commit()
+    conn.close()
+    print("🧹 Deleted entries with NULL volume or label.")
