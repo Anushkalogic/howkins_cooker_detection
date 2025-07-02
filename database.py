@@ -13,9 +13,11 @@ def init_db():
             image_path TEXT,
             volume_liters REAL,
             label TEXT,
-            unique_id TEXT
+            unique_id TEXT,
+            camera_name TEXT   -- 👈 NEW COLUMN
         )
     ''')
+
 
     # Check & add if column not already added (optional safety)
     cursor.execute("PRAGMA table_info(images)")
@@ -24,24 +26,33 @@ def init_db():
     if 'unique_id' not in columns:
         cursor.execute("ALTER TABLE images ADD COLUMN unique_id TEXT")
         print("✅ 'unique_id' column added.")
+    # Check & add if column not already added
+
+
+    if 'camera_name' not in columns:
+        cursor.execute("ALTER TABLE images ADD COLUMN camera_name TEXT")
+        print("✅ 'camera_name' column added.")
+
 
     conn.commit()
     conn.close()
 
-def insert_image_with_volume(image_path, volume_liters, label):
+def insert_image_with_volume(image_path, volume_liters, label, camera_name="1"):
     image_path = image_path.replace("\\", "/")
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+
+    # Insert the row with camera_name
     cursor.execute("""
-        INSERT INTO images (image_path, volume_liters, label)
-        VALUES (?, ?, ?)
-    """, (image_path, volume_liters, label))
+        INSERT INTO images (image_path, volume_liters, label, camera_name)
+        VALUES (?, ?, ?, ?)
+    """, (image_path, volume_liters, label, camera_name))
     conn.commit()
 
     last_id = cursor.lastrowid
     unique_id = f"hw{last_id}"
 
-    # ✅ Now update the row with the generated ID
+    # Update the row with generated unique_id
     cursor.execute("""
         UPDATE images SET unique_id = ? WHERE id = ?
     """, (unique_id, last_id))
@@ -52,19 +63,19 @@ def insert_image_with_volume(image_path, volume_liters, label):
     print(f"    📷 Image Path : {image_path}")
     print(f"    📦 Volume (L) : {volume_liters}")
     print(f"    🏷️ Label      : {label}")
+    print(f"    🎥 Camera      : {camera_name}")
 
     conn.close()
+    return unique_id, camera_name
 
-    return unique_id  # ✅ return this value
-
-# database.py
 def fetch_all_images_with_volume_in_liters():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT image_path, volume_liters, label, unique_id FROM images")
+    cursor.execute("SELECT image_path, volume_liters, label, unique_id, camera_name FROM images")
     rows = cursor.fetchall()
     conn.close()
-    return [(img.replace("\\", "/"), vol, lbl, uid) for img, vol, lbl, uid in rows]
+    return [(img.replace("\\", "/"), vol, lbl, uid, cam) for img, vol, lbl, uid, cam in rows]
+
 
 
 def query_images_by_param(param):

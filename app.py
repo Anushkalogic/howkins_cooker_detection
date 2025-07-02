@@ -92,8 +92,9 @@ def my_sink(result, video_frame):
                         label = "object"  # fallback if empty string
 
             # Save to DB
-        unique_id = insert_image_with_volume(image_path.replace("\\", "/"), volume_liters, label)
-        update_latest_detection(image_path.replace("\\", "/"), volume_liters, label, unique_id)
+        camera_name = "1"  # 👈 Set or dynamically detect
+        unique_id, camera_name = insert_image_with_volume(image_path.replace("\\", "/"), volume_liters, label, camera_name)
+        update_latest_detection(image_path.replace("\\", "/"), volume_liters, label, unique_id, camera_name)
         print(f"📸 {image_path} → Volume: {volume_liters} L | Label: {label}")
 
 PIXEL_TO_CM = 0.05  
@@ -141,16 +142,14 @@ def estimate_volume_cylinder(image_path):
 #     return render_template("video_result.html", video_path="output/output_video.mp4", detections=detections)
 
 
-
 @app.route('/')
 def index():
     run_roboflow_pipeline()
     detections = fetch_all_images_with_volume_in_liters()
 
-    # Count labels
     total_frames = len(detections)
-    dented = sum(1 for _, _, label in detections if 'dent' in str(label).lower())
-    scratched = sum(1 for _, _, label in detections if 'scratch' in str(label).lower())
+    dented = sum(1 for _, _, label, _, _ in detections if 'dent' in str(label).lower())
+    scratched = sum(1 for _, _, label, _, _ in detections if 'scratch' in str(label).lower())
 
     return render_template(
         "video_result.html",

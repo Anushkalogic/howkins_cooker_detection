@@ -104,7 +104,7 @@
             <th>Defect/Dent</th>
             <th>Download</th>
         </tr>
-        {% for image, liters, label in detections %}
+        {% for image, liters, label, id, camera in detections %}
         <tr>
             <td>
                 <img src="{{ url_for('static', filename=image.split('static/')[-1]) }}" width="200">
