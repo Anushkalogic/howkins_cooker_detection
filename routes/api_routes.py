@@ -8,8 +8,9 @@ latest_detection = {
     "image_path": None,
     "volume_liters": None,
     "label": None,
-    "id": None,             # ⬅️ Renamed from unique_id
-    "camera": None          # ⬅️ Renamed from camera_name
+    "id": None,              # 🔁 changed from "unique_id"
+    "camera": None,          # 🔁 changed from "camera_name"
+    "severity": None         # ✅ add severity
 }
 
 
@@ -22,10 +23,12 @@ def get_live_detection():
             "image_path": latest_detection["image_path"],
             "volume_liters": latest_detection["volume_liters"] or 0,
             "defect": latest_detection["label"] or "none",
-            "id": latest_detection["id"] or "N/A",           # ⬅️ Renamed
-            "camera": latest_detection["camera"] or "N/A"    # ⬅️ Renamed
+            "id": latest_detection["id"] or "N/A",
+            "camera": latest_detection["camera"] or "N/A",
+            "severity": latest_detection["severity"] or "None"
         }
     })
+
 
 
 @api_bp.route('/db-detections', methods=['GET'])
@@ -77,4 +80,13 @@ def update_latest_detection(image_path, volume_liters, label, unique_id, camera_
     latest_detection["volume_liters"] = int(volume_liters) if volume_liters is not None else 0
     latest_detection["label"] = label if label else "none"
     latest_detection["id"] = unique_id                  # ⬅️ Renamed
-    latest_detection["camera"] = camera_name            # ⬅️ Renamed
+    latest_detection["camera"] = camera_name   
+    if label == "full":
+        severity = "High"
+    elif label == "dent":
+        severity = "Medium"
+    elif label == "scrach":
+        severity = "Low"
+    else:
+        severity = "None"
+    latest_detection["severity"] = severity         # ⬅️ Renamed

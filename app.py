@@ -151,6 +151,7 @@ def index():
     dented = sum(1 for _, _, label, _, _ in detections if 'dent' in str(label).lower())
     scratched = sum(1 for _, _, label, _, _ in detections if 'scratch' in str(label).lower())
 
+
     return render_template(
         "video_result.html",
         video_path="output/output_video.mp4",
@@ -172,6 +173,18 @@ def show_db():
     data = fetch_all_images_with_volume_in_liters()
     return jsonify(data)
 
+@app.route('/delete-all')
+def delete_all_entries():
+    import sqlite3
+    from database import DB_PATH
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM images")  # 🚨 This deletes all records!
+    conn.commit()
+    conn.close()
+
+    return "✅ All entries deleted from DB."
 
 @app.route('/download-csv')
 def download_csv():
