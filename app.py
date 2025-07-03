@@ -64,7 +64,6 @@ def run_roboflow_pipeline():
     ])
 
     cleanup_null_entries()
-
 def my_sink(result, video_frame):
     global frame_count
     output_image = result.get("output_image")
@@ -75,65 +74,85 @@ def my_sink(result, video_frame):
         with lock:
             frame_count += 1
             image_path = os.path.join(IMAGE_SAVE_DIR, f"frame_{frame_count}.jpg")
-            cv2.imwrite(image_path, frame)
-            out.write(frame)
 
-            # Estimate volume
-            volume_liters, _ = estimate_volume_cylinder(image_path)
-            volume_liters = round(volume_liters, 1) if volume_liters is not None else 0.0
+            # Estimate volume + dimensions
+            volume_liters, height_cm, diameter_cm = estimate_volume_cylinder(frame)
+            volume_liters = int(round(volume_liters)) if volume_liters is not None else 0  # ✅ Integer only
 
             # Get label
-            label = "object"  # default fallback
+            label = "object"
             if hasattr(predictions, "data") and "class_name" in predictions.data:
                 class_names = predictions.data["class_name"]
                 if isinstance(class_names, np.ndarray) and len(class_names) > 0:
-                    label = ", ".join(class_names.tolist())
-                    if not label.strip():
-                        label = "object"  # fallback if empty string
+                    label = ", ".join(class_names.tolist()).strip()
+                    if not label:
+                        label = "object"
+
+            # Determine severity
+            if "pull" in label.lower():
+                severity = "High"
+            elif "dent" in label.lower():
+                severity = "Medium"
+            elif "scratch" in label.lower():
+                severity = "Low"
+            else:
+                severity = "None"
+
+            # 👉 Draw bounding boxes WITHOUT label
+            if hasattr(predictions, "xyxy") and hasattr(predictions, "class_name"):
+                boxes = predictions.xyxy
+                for box in boxes:
+                    x1, y1, x2, y2 = map(int, box)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)  # Purple box
+
+            # 👉 Draw text on side (no box label)
+            text_color = (255, 255, 255)  # White
+            text_lines = [
+                f"Height: {round(height_cm, 1)} cm",
+                f"Width : {round(diameter_cm, 1)} cm",
+                f"Volume: {volume_liters} L",  # ✅ integer L
+                f"Defect: {label}",
+                # f"Defect: {label}",
+                # f"Severity: {severity}"
+
+            ]
+
+            for i, line in enumerate(text_lines):
+                y = 30 + i * 30
+                # cv2.rectangle(frame, (5, y - 25), (310, y + 5), (0, 0, 0), -1)
+                cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, text_color, 2)
+
+            # Save frame
+            cv2.imwrite(image_path, frame)
+            out.write(frame)
 
             # Save to DB
-        camera_name = "1"  # 👈 Set or dynamically detect
-        unique_id, camera_name = insert_image_with_volume(image_path.replace("\\", "/"), volume_liters, label, camera_name)
-        update_latest_detection(image_path.replace("\\", "/"), volume_liters, label, unique_id, camera_name)
-        print(f"📸 {image_path} → Volume: {volume_liters} L | Label: {label}")
+            camera_name = "1"
+            unique_id, camera_name = insert_image_with_volume(
+                image_path.replace("\\", "/"), volume_liters, label, camera_name
+            )
+            update_latest_detection(
+                image_path.replace("\\", "/"), volume_liters, label, unique_id, camera_name
+            )
 
-PIXEL_TO_CM = 0.05  
-def estimate_volume_cylinder(image_path):
-    image = cv2.imread(image_path)
-    if image is None:
-        print(f"⚠️ Failed to read image: {image_path}")
-        return None, None
-    # Convert to grayscale and threshold
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            print(f"📸 {image_path} → Volume: {volume_liters} L | Label: {label}")
+def estimate_volume_cylinder(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    # Find external contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        print("⚠️ No contours found.")
-        return None, None
-    # Pick the largest contour
+        return 0.0, 0.0, 0.0
+
     largest = max(contours, key=cv2.contourArea)
     x, y, w, h = cv2.boundingRect(largest)
 
-    # Estimate real-world dimensions
     height_cm = h * PIXEL_TO_CM
     diameter_cm = w * PIXEL_TO_CM
     radius_cm = diameter_cm / 2
-
-    # Volume of cylinder = π × r² × h (in cm³)
     volume_cm3 = math.pi * (radius_cm ** 2) * height_cm
-    volume_l = volume_cm3 / 1000  # cm³ to liters
-    volume_l_rounded = round(volume_l, 1)
-    volume_l_int = int(round(volume_l))
+    volume_liters = volume_cm3 / 1000
 
-    # Draw label
-    label = f"{volume_l_int} L"
-    cv2.putText(image, label, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.imwrite(image_path, image)
-
-    print(f"📏 Estimated Volume: {volume_l_rounded} L from image: {image_path}")
-    return volume_l_rounded, "object"
+    return volume_liters, height_cm, diameter_cm
 
 # @app.route('/')
 # def index():
@@ -172,12 +191,11 @@ def show_db():
     from database import fetch_all_images_with_volume_in_liters
     data = fetch_all_images_with_volume_in_liters()
     return jsonify(data)
-
+# delete all entry from db use as per your requirement
 @app.route('/delete-all')
 def delete_all_entries():
     import sqlite3
     from database import DB_PATH
-
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM images")  # 🚨 This deletes all records!

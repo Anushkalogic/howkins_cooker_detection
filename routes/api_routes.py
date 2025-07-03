@@ -57,7 +57,7 @@ def get_db_detections():
 
             data.append({
                 "image_path": image_path,
-                "volume_liters": volume,
+                "volume_liters": f"{int(volume)} L" if volume else "0 L",
                 "defect": defect,
                 "id": unique_id,               # ⬅️ Renamed
                 "camera": camera_name,         # ⬅️ Renamed
