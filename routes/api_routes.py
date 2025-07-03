@@ -13,21 +13,23 @@ latest_detection = {
     "severity": None         # ✅ add severity
 }
 
-
 # Live detection (updated during sink function)
 @api_bp.route('/live-detection', methods=['GET'])
 def get_live_detection():
     return jsonify({
         "success": True,
         "data": {
-            "image_path": latest_detection["image_path"],
-            "volume_liters": latest_detection["volume_liters"] or 0,
-            "defect": latest_detection["label"] or "none",
-            "id": latest_detection["id"] or "N/A",
-            "camera": latest_detection["camera"] or "N/A",
-            "severity": latest_detection["severity"] or "None"
+            "image_path": latest_detection.get("image_path"),
+            "volume_liters": latest_detection.get("volume_liters", 0),
+            "defect": latest_detection.get("label", "none"),
+            "id": latest_detection.get("id", "N/A"),          # ✅ corrected
+            "camera": latest_detection.get("camera", "N/A"),  # ✅ corrected
+            "height_cm": latest_detection.get("height_cm", 0),
+            "width_cm": latest_detection.get("width_cm", 0),
+            "severity": latest_detection.get("severity", "None")
         }
     })
+
 
 
 
@@ -75,18 +77,15 @@ def get_db_detections():
 
 
 # Called from my_sink to update latest result
-def update_latest_detection(image_path, volume_liters, label, unique_id, camera_name):
+# ✅ At the bottom of routes/api_routes.py
+def update_latest_detection(image_path, volume_liters, label, unique_id, camera_name, height_cm, width_cm, severity):
     latest_detection["image_path"] = image_path
     latest_detection["volume_liters"] = int(volume_liters) if volume_liters is not None else 0
     latest_detection["label"] = label if label else "none"
-    latest_detection["id"] = unique_id                  # ⬅️ Renamed
-    latest_detection["camera"] = camera_name   
-    if label == "full":
-        severity = "High"
-    elif label == "dent":
-        severity = "Medium"
-    elif label == "scrach":
-        severity = "Low"
-    else:
-        severity = "None"
-    latest_detection["severity"] = severity         # ⬅️ Renamed
+    latest_detection["id"] = unique_id
+    latest_detection["camera"] = camera_name
+    latest_detection["severity"] = severity
+    latest_detection["height_cm"] = round(height_cm, 1)
+    latest_detection["width_cm"] = round(width_cm, 1)
+
+      # ⬅️ Renamed

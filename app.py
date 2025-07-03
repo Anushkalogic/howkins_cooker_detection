@@ -1,11 +1,10 @@
 from flask import Flask, render_template, send_file, request, jsonify
 import os, cv2, threading, subprocess, csv, math
 from inference import InferencePipeline
-from routes.api_routes import update_latest_detection  # 👈 import
 import numpy as np
 from database import init_db, insert_image_with_volume, fetch_all_images_with_volume_in_liters, query_images_by_param,update_defect_entries
 from database import cleanup_null_entries
-from routes.api_routes import api_bp  # 👈 yaha pura blueprint import karo
+from routes.api_routes import api_bp ,update_latest_detection # 👈 yaha pura blueprint import karo
 
 app = Flask(__name__)
 app.register_blueprint(api_bp)  # 👈 ye register tab karo jab pura define ho chuka ho
@@ -132,8 +131,16 @@ def my_sink(result, video_frame):
                 image_path.replace("\\", "/"), volume_liters, label, camera_name
             )
             update_latest_detection(
-                image_path.replace("\\", "/"), volume_liters, label, unique_id, camera_name
-            )
+        image_path.replace("\\", "/"),
+        volume_liters,
+        label,
+        unique_id,
+        camera_name,
+        height_cm,
+        diameter_cm,
+        severity
+    )
+
 
             print(f"📸 {image_path} → Volume: {volume_liters} L | Label: {label}")
 def estimate_volume_cylinder(frame):
@@ -153,6 +160,21 @@ def estimate_volume_cylinder(frame):
     volume_liters = volume_cm3 / 1000
 
     return volume_liters, height_cm, diameter_cm
+# insert_detection.py
+def insert_detection(image_path, volume_liters, label, unique_id, camera, severity):
+    global latest_detection
+    latest_detection = {
+        "image_path": image_path,
+        "volume_liters": volume_liters,
+        "label": label,
+        "unique_id": unique_id,
+        "camera_name": camera,
+        "severity": severity,
+        "height_cm": 0,
+        "width_cm": 0
+    }
+    print(f"LATEST DETECTION SET TO: {latest_detection}")
+    # ... DB insert logic ...
 
 # @app.route('/')
 # def index():
