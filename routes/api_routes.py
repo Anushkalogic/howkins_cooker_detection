@@ -1,6 +1,10 @@
+import cv2
 from flask import Blueprint, jsonify
-from database import fetch_all_images_with_volume_in_liters
-
+import numpy as np
+from database import fetch_all_images_with_volume_in_liters, insert_image_with_volume
+from flask import request
+import base64
+from utils.volume_utils import estimate_volume_cylinder
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 
 # Store the most recent detection data
@@ -74,6 +78,70 @@ def get_db_detections():
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@api_bp.route('/detect-frame', methods=['POST'])
+def detect_frame():
+    data = request.get_json()
+    image_base64 = data.get('image_base64')
+    if not image_base64:
+        return jsonify({'error': 'No image_base64 provided'}), 400
+
+    image_data = base64.b64decode(image_base64)
+    np_img = np.frombuffer(image_data, np.uint8)
+    img = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+
+    # Estimate volume etc.
+    volume_liters, height_cm, width_cm = estimate_volume_cylinder(img)
+    volume_liters = int(round(volume_liters)) if volume_liters is not None else 0
+
+    label = "defect"
+    severity = "Low"
+
+    image_path = "static/temp_detect.jpg"
+    cv2.imwrite(image_path, img)
+
+    camera_name = "1"
+    unique_id, _ = insert_image_with_volume(image_path, volume_liters, label, camera_name)
+
+    update_latest_detection(
+        image_path,
+        volume_liters,
+        label,
+        unique_id,
+        camera_name,
+        height_cm,
+        width_cm,
+        severity
+    )
+
+    return jsonify({
+        "data": {
+            "volume_liters": volume_liters,
+            "height_cm": round(height_cm, 1),
+            "width_cm": round(width_cm, 1),
+            "label": label,
+            "severity": severity,
+            "camera": camera_name,
+            "id": unique_id
+        }
+    })
+
+def run_inference_single_frame(frame):
+    from app import estimate_volume_cylinder
+    volume_liters, height_cm, width_cm = estimate_volume_cylinder(frame)
+
+    label = "object"
+    severity = "None"
+
+    return {
+        "volume_liters": int(volume_liters),
+        "height_cm": round(height_cm, 1),
+        "width_cm": round(width_cm, 1),
+        "label": label,
+        "severity": severity
+    }
+
 
 
 # Called from my_sink to update latest result

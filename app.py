@@ -1,4 +1,4 @@
-from flask import Flask, render_template, send_file, request, jsonify
+from flask import Flask, Response, render_template, send_file, request, jsonify
 import os, cv2, threading, subprocess, csv, math
 from inference import InferencePipeline
 import numpy as np
@@ -7,15 +7,14 @@ from database import cleanup_null_entries
 from routes.api_routes import api_bp ,update_latest_detection # 👈 yaha pura blueprint import karo
 
 app = Flask(__name__)
-app.register_blueprint(api_bp)  # 👈 ye register tab karo jab pura define ho chuka ho
+app.register_blueprint(api_bp)
 debug=True
 
 INPUT_VIDEO = r"static/dataset/videoss.mp4"
 OUTPUT_VIDEO = r"static/output/output_video.mp4"
 TEMP_OUTPUT = r"static/output/temp_output.mp4"
 IMAGE_SAVE_DIR = r"static/detected_images"
-import cv2
-import math
+PIXEL_TO_CM = 0.05
 
 lock = threading.Lock()
 frame_count = 0
@@ -23,15 +22,16 @@ frame_count = 0
 os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(OUTPUT_VIDEO), exist_ok=True)
 
-
-
-PIXEL_TO_CM = 0.05  
-
 def run_roboflow_pipeline():
     global frame_count, out
     frame_count = 0
+
+    # Clean previous images
     for f in os.listdir(IMAGE_SAVE_DIR):
-        os.remove(os.path.join(IMAGE_SAVE_DIR, f))
+        try:
+            os.remove(os.path.join(IMAGE_SAVE_DIR, f))
+        except Exception as e:
+            print(f"❌ Failed to delete: {e}")
 
     cap = cv2.VideoCapture(INPUT_VIDEO)
     if not cap.isOpened():
@@ -160,38 +160,15 @@ def estimate_volume_cylinder(frame):
     volume_liters = volume_cm3 / 1000
 
     return volume_liters, height_cm, diameter_cm
-# insert_detection.py
-def insert_detection(image_path, volume_liters, label, unique_id, camera, severity):
-    global latest_detection
-    latest_detection = {
-        "image_path": image_path,
-        "volume_liters": volume_liters,
-        "label": label,
-        "unique_id": unique_id,
-        "camera_name": camera,
-        "severity": severity,
-        "height_cm": 0,
-        "width_cm": 0
-    }
-    print(f"LATEST DETECTION SET TO: {latest_detection}")
-    # ... DB insert logic ...
-
-# @app.route('/')
-# def index():
-#     run_roboflow_pipeline()
-#     detections = fetch_all_images_with_volume_in_liters()
-#     return render_template("video_result.html", video_path="output/output_video.mp4", detections=detections)
 
 
 @app.route('/')
 def index():
     run_roboflow_pipeline()
     detections = fetch_all_images_with_volume_in_liters()
-
     total_frames = len(detections)
     dented = sum(1 for _, _, label, _, _ in detections if 'dent' in str(label).lower())
     scratched = sum(1 for _, _, label, _, _ in detections if 'scratch' in str(label).lower())
-
 
     return render_template(
         "video_result.html",
@@ -210,21 +187,36 @@ def get_live_count():
 
 @app.route('/show-db')
 def show_db():
-    from database import fetch_all_images_with_volume_in_liters
     data = fetch_all_images_with_volume_in_liters()
     return jsonify(data)
-# delete all entry from db use as per your requirement
 @app.route('/delete-all')
 def delete_all_entries():
     import sqlite3
     from database import DB_PATH
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM images")  # 🚨 This deletes all records!
+    cursor.execute("DELETE FROM images")
     conn.commit()
     conn.close()
-
     return "✅ All entries deleted from DB."
+
+
+@app.route('/camera-feed')
+def camera_feed():
+    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+def gen_frames():
+    cap = cv2.VideoCapture(0)
+    while True:
+        success, frame = cap.read()
+        if not success:
+            break
+        ret, buffer = cv2.imencode('.jpg', frame)
+        frame = buffer.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
 
 @app.route('/download-csv')
 def download_csv():
@@ -234,14 +226,12 @@ def download_csv():
     with open(csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['Image Path', 'Volume (L)', 'Label'])
-
         for row in rows:
             image_path, volume_liters, label = row
             volume_value = f"{int(volume_liters)} L" if volume_liters is not None else "N/A"
             writer.writerow([image_path, volume_value, label])
 
     return send_file(csv_path, as_attachment=True)
-
 
 
 @app.route('/query')
@@ -255,4 +245,4 @@ def query():
 if __name__ == '__main__':
     init_db()
     update_defect_entries()
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
